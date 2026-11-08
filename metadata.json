@@ -1,0 +1,6 @@
+{
+  "name": "Leash | Agentic Commerce Trust & Policy Layer for PayPal",
+  "description": "Give your AI agent a wallet, not a blank check. Deterministic mandate policies, prompt-injection shielding, human approval gates, and PayPal sandbox settlement.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
