@@ -71,12 +71,20 @@ export interface LedgerEntry {
     notes?: string;
   };
   
+  // Tamper-evident SHA-256 hash chain
+  prevHash: string;
+  entryHash: string;
+
   // PayPal settlement & transaction tracking
   paypalOrderId?: string;
   paypalCaptureId?: string;
   paypalRefundId?: string;
+  paypalApprovalUrl?: string;
   idempotencyKey: string;
   isCachedDemoResult?: boolean;
+  confirmedByWebhook?: boolean;
+  webhookEventId?: string;
+  reconciledViaApi?: boolean;
   
   // Telemetry
   telemetry: AgentTelemetry;

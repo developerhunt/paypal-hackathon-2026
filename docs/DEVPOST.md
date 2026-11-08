@@ -2,7 +2,7 @@
 
 **Tagline:** Give your AI agent a wallet, not a blank check.
 **GitHub Repository:** https://github.com/developerhunt/paypal-hackathon-2026
-**Live Demo:** https://ais-pre-a6srnyldmq2ceyfvopart6-339504055806.asia-southeast1.run.app
+**Live Demo:** https://leash-agentic-trust-layer.onrender.com
 
 ---
 

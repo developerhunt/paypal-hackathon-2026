@@ -1,7 +1,30 @@
-import React from 'react';
-import { ShieldCheck, ShieldAlert, CreditCard, Terminal, Award, FileSpreadsheet, MessageSquareQuote, Sun, Moon, Github } from 'lucide-react';
+import React, { useState, useEffect } from 'react';
+import {
+  ShieldCheck,
+  ShieldAlert,
+  CreditCard,
+  Terminal,
+  Award,
+  FileSpreadsheet,
+  MessageSquareQuote,
+  Sun,
+  Moon,
+  Github,
+  Activity,
+  Cpu,
+  Layers,
+  CheckCircle,
+} from 'lucide-react';
 
 export type ActiveTab = 'mission' | 'scenarios' | 'ledger' | 'evals' | 'judge' | 'ask';
+
+export interface SystemStatusData {
+  paypal: { mode: 'LIVE_SANDBOX' | 'MOCK'; environment: string; description?: string };
+  gemini: { mode: 'LIVE' | 'MOCK'; model: string };
+  channel3: { mode: 'LIVE' | 'MOCK_FIXTURE'; description?: string };
+  ledger: { mode: string; storage: string; chainValid: boolean; entriesCount: number };
+  build?: { version: string; timestamp: string };
+}
 
 interface NavbarProps {
   activeTab: ActiveTab;
@@ -22,12 +45,73 @@ export const Navbar: React.FC<NavbarProps> = ({
   darkMode,
   setDarkMode,
 }) => {
+  const [status, setStatus] = useState<SystemStatusData | null>(null);
+
+  useEffect(() => {
+    fetch('/api/status')
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data) => {
+        if (data) setStatus(data);
+      })
+      .catch(() => {});
+  }, []);
+
   return (
     <header className="border-b border-zinc-800 bg-zinc-950/80 backdrop-blur-md sticky top-0 z-50 transition-colors">
-      {/* Sandbox Notice Banner */}
-      <div className="bg-gradient-to-r from-amber-500/20 via-amber-600/15 to-amber-500/20 border-b border-amber-500/30 px-4 py-1.5 text-center text-xs font-mono font-medium text-amber-300 flex items-center justify-center gap-2">
-        <span className="inline-block w-2 h-2 rounded-full bg-amber-400 animate-pulse"></span>
-        <span>PAYPAL DEVELOPER SANDBOX ENVIRONMENT &bull; NO REAL MONEY MOVES &bull; DETERMINISTIC POLICY ACTIVE</span>
+      {/* Sandbox Notice Banner with Subsystem Live/Mock Indicators */}
+      <div className="bg-gradient-to-r from-amber-500/15 via-zinc-900 to-amber-500/15 border-b border-amber-500/30 px-3 py-1.5 text-xs font-mono flex flex-wrap items-center justify-between gap-2 text-zinc-300">
+        <div className="flex items-center gap-2">
+          <span className="inline-block w-2 h-2 rounded-full bg-amber-400 animate-pulse"></span>
+          <span className="text-amber-300 font-bold tracking-tight">PAYPAL SANDBOX</span>
+          <span className="text-zinc-500 hidden sm:inline">&bull; No real money moves</span>
+        </div>
+
+        {/* Dynamic Subsystem Health Badges */}
+        <div className="flex items-center gap-2 text-[10px]">
+          <span
+            className={`px-1.5 py-0.5 rounded font-bold border ${
+              status?.paypal.mode === 'LIVE_SANDBOX'
+                ? 'bg-emerald-950/60 text-emerald-300 border-emerald-500/40'
+                : 'bg-zinc-800 text-zinc-400 border-zinc-700'
+            }`}
+            title={status?.paypal.description || 'PayPal Integration'}
+          >
+            PayPal: {status?.paypal.mode === 'LIVE_SANDBOX' ? '● LIVE SANDBOX' : '○ MOCK FIXTURE'}
+          </span>
+
+          <span
+            className={`px-1.5 py-0.5 rounded font-bold border ${
+              status?.gemini.mode === 'LIVE'
+                ? 'bg-indigo-950/60 text-indigo-300 border-indigo-500/40'
+                : 'bg-zinc-800 text-zinc-400 border-zinc-700'
+            }`}
+            title={`Gemini Model: ${status?.gemini.model || 'gemini-2.5-flash'}`}
+          >
+            Gemini: {status?.gemini.mode === 'LIVE' ? '● LIVE (2.5-flash)' : '○ DETERMINISTIC'}
+          </span>
+
+          <span
+            className={`px-1.5 py-0.5 rounded font-bold border ${
+              status?.channel3.mode === 'LIVE'
+                ? 'bg-teal-950/60 text-teal-300 border-teal-500/40'
+                : 'bg-zinc-800 text-zinc-400 border-zinc-700'
+            }`}
+            title={status?.channel3.description || 'Commerce Catalog'}
+          >
+            Channel3: {status?.channel3.mode === 'LIVE' ? '● LIVE' : '○ VERIFIED CATALOG'}
+          </span>
+
+          <span
+            className={`hidden md:inline px-1.5 py-0.5 rounded font-bold border ${
+              status?.ledger.chainValid
+                ? 'bg-emerald-950/60 text-emerald-300 border-emerald-500/40'
+                : 'bg-rose-950/60 text-rose-300 border-rose-500/40'
+            }`}
+            title="SHA-256 Hash Chain Integrity"
+          >
+            Ledger: {status?.ledger.chainValid ? '✓ SHA-256 HASH-CHAINED' : '✗ CHAIN TAMPERED'}
+          </span>
+        </div>
       </div>
 
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between">

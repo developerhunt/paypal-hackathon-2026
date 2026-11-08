@@ -176,6 +176,14 @@ export class Channel3Client {
     this.isMockMode = process.env.MOCK_MODE === 'true' || !this.apiKey;
   }
 
+  public get isMock(): boolean {
+    return this.isMockMode;
+  }
+
+  public get modeDescription(): string {
+    return this.isMockMode ? 'MOCK_FIXTURE' : 'LIVE';
+  }
+
   /**
    * Discovers products matching search criteria.
    * If live Channel3 API key is configured, calls the API; otherwise uses seeded catalog.

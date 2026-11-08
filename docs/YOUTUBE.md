@@ -6,7 +6,7 @@ Leash: Give Your AI Agent a Wallet, Not a Blank Check | PayPal AI Hackathon 2026
 ## Description
 Submission for the PayPal AI Hackathon: Build What's Next with PayPal and AI (Devpost).
 
-Live Demo: https://ais-pre-a6srnyldmq2ceyfvopart6-339504055806.asia-southeast1.run.app
+Live Demo: https://leash-agentic-trust-layer.onrender.com
 GitHub Repository: https://github.com/developerhunt/paypal-hackathon-2026
 
 Core Principle: "AI proposes. Deterministic policy disposes. Human approves. PayPal settles. The ledger remembers."

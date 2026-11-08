@@ -2,15 +2,14 @@
 
 > **"Give your AI agent a wallet, not a blank check."**
 
-[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://opensource.org/licenses/MIT)
+[![CI](https://github.com/developerhunt/paypal-hackathon-2026/actions/workflows/ci.yml/badge.svg)](https://github.com/developerhunt/paypal-hackathon-2026/actions/workflows/ci.yml)
 [![PayPal](https://img.shields.io/badge/PayPal-Orders_v2_Sandbox-003087?logo=paypal)](https://developer.paypal.com)
 [![Google Gemini](https://img.shields.io/badge/AI-Gemini_2.5_Flash-4285F4?logo=google)](https://aistudio.google.com)
-[![Tests](https://img.shields.io/badge/Tests-16_Passing-brightgreen.svg)]()
-[![Red Team Evals](https://img.shields.io/badge/Red_Team_Defense-100%25_(32%2F32)-success.svg)]()
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
 **PayPal AI Hackathon 2026 Submission (Devpost)**
 
-- **Live Deployed Demo:** [https://ais-pre-a6srnyldmq2ceyfvopart6-339504055806.asia-southeast1.run.app](https://ais-pre-a6srnyldmq2ceyfvopart6-339504055806.asia-southeast1.run.app)
+- **Live Deployed Demo (Render):** [https://leash-agentic-trust-layer.onrender.com](https://leash-agentic-trust-layer.onrender.com)
 - **Demo Video (YouTube):** [Demo Video Walkthrough (Under 2:45)](https://youtube.com) *(Placeholder for uploaded recording)*
 - **GitHub Repository:** [https://github.com/developerhunt/paypal-hackathon-2026](https://github.com/developerhunt/paypal-hackathon-2026)
 

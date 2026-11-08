@@ -26,6 +26,43 @@ export const LedgerGrid: React.FC<LedgerGridProps> = ({ entries, onRefund, onRef
   const [statusFilter, setStatusFilter] = useState<string>('ALL');
   const [selectedEntry, setSelectedEntry] = useState<LedgerEntry | null>(null);
   const [copyFeedback, setCopyFeedback] = useState<string | null>(null);
+  const [integrityResult, setIntegrityResult] = useState<{
+    valid: boolean;
+    entriesCount: number;
+    brokenAt: number | null;
+    message: string;
+  } | null>(null);
+  const [verifying, setVerifying] = useState(false);
+  const [reconcilingId, setReconcilingId] = useState<string | null>(null);
+
+  const handleVerifyIntegrity = async () => {
+    setVerifying(true);
+    try {
+      const res = await fetch('/api/ledger/verify');
+      if (res.ok) {
+        const data = await res.json();
+        setIntegrityResult(data);
+      }
+    } catch (err) {
+      console.error('Verification error:', err);
+    } finally {
+      setVerifying(false);
+    }
+  };
+
+  const handleReconcile = async (orderId: string) => {
+    setReconcilingId(orderId);
+    try {
+      const res = await fetch(`/api/ledger/reconcile/${orderId}`);
+      if (res.ok) {
+        onRefresh();
+      }
+    } catch (err) {
+      console.error('Reconciliation error:', err);
+    } finally {
+      setReconcilingId(null);
+    }
+  };
 
   const filteredEntries = useMemo(() => {
     return entries.filter((e) => {
@@ -143,6 +180,19 @@ export const LedgerGrid: React.FC<LedgerGridProps> = ({ entries, onRefund, onRef
             <option value="REFUNDED">Refunded</option>
           </select>
 
+          {/* Verify Chain Integrity */}
+          <button
+            onClick={handleVerifyIntegrity}
+            disabled={verifying}
+            className="px-3 py-1.5 rounded-lg bg-emerald-950/60 hover:bg-emerald-900 border border-emerald-600/50 text-emerald-300 text-xs font-medium flex items-center gap-1.5 transition-colors cursor-pointer disabled:opacity-50"
+            title="Cryptographically verify continuous SHA-256 hash chain from genesis"
+          >
+            <ShieldCheck className="w-3.5 h-3.5 text-emerald-400" />
+            <span className="hidden sm:inline">
+              {verifying ? 'Verifying...' : 'Verify SHA-256 Chain'}
+            </span>
+          </button>
+
           {/* Export CSV */}
           <a
             href="/api/ledger/csv"
@@ -155,6 +205,52 @@ export const LedgerGrid: React.FC<LedgerGridProps> = ({ entries, onRefund, onRef
           </a>
         </div>
       </div>
+
+      {/* Cryptographic Chain Integrity Inspection Banner/Modal */}
+      {integrityResult && (
+        <div className="mt-4 p-4 rounded-xl border bg-zinc-950 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 animate-in fade-in">
+          <div className="flex items-start gap-3">
+            <div
+              className={`w-9 h-9 rounded-lg flex items-center justify-center shrink-0 ${
+                integrityResult.valid
+                  ? 'bg-emerald-500/20 border border-emerald-500/40 text-emerald-400'
+                  : 'bg-rose-500/20 border border-rose-500/40 text-rose-400'
+              }`}
+            >
+              {integrityResult.valid ? (
+                <ShieldCheck className="w-5 h-5" />
+              ) : (
+                <ShieldAlert className="w-5 h-5" />
+              )}
+            </div>
+            <div>
+              <div className="flex items-center gap-2">
+                <span className="font-bold text-sm text-white">
+                  {integrityResult.valid ? 'SHA-256 Audit Chain Verified Intact' : 'Audit Chain Tampering Detected!'}
+                </span>
+                <span
+                  className={`text-[10px] font-mono font-bold px-2 py-0.5 rounded ${
+                    integrityResult.valid
+                      ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30'
+                      : 'bg-rose-500/20 text-rose-300 border border-rose-500/30'
+                  }`}
+                >
+                  {integrityResult.valid ? 'UNBROKEN' : 'BROKEN'}
+                </span>
+              </div>
+              <p className="text-xs text-zinc-400 mt-0.5">
+                {integrityResult.message} &bull; Validated {integrityResult.entriesCount} consecutive blocks against genesis anchor.
+              </p>
+            </div>
+          </div>
+          <button
+            onClick={() => setIntegrityResult(null)}
+            className="text-xs text-zinc-400 hover:text-white px-2 py-1 rounded bg-zinc-800 hover:bg-zinc-700 cursor-pointer"
+          >
+            Dismiss
+          </button>
+        </div>
+      )}
 
       {/* Ledger Table */}
       <div className="overflow-x-auto mt-4 rounded-xl border border-zinc-800">
@@ -240,6 +336,18 @@ export const LedgerGrid: React.FC<LedgerGridProps> = ({ entries, onRefund, onRef
                             <span>{e.paypalCaptureId.slice(0, 12)}...</span>
                           </div>
                         )}
+                        {e.confirmedByWebhook && (
+                          <div className="text-[9px] text-emerald-400 font-bold flex items-center gap-1 mt-0.5">
+                            <CheckCircle className="w-2.5 h-2.5" />
+                            <span>Webhook Verified</span>
+                          </div>
+                        )}
+                        {e.reconciledViaApi && !e.confirmedByWebhook && (
+                          <div className="text-[9px] text-sky-400 font-bold flex items-center gap-1 mt-0.5">
+                            <CheckCircle className="w-2.5 h-2.5" />
+                            <span>API Reconciled</span>
+                          </div>
+                        )}
                         {copyFeedback === e.id && (
                           <div className="text-[9px] text-emerald-400">Copied!</div>
                         )}
@@ -280,6 +388,17 @@ export const LedgerGrid: React.FC<LedgerGridProps> = ({ entries, onRefund, onRef
                       >
                         <Eye className="w-3.5 h-3.5" />
                       </button>
+
+                      {e.status === 'CAPTURED' && e.paypalOrderId && !e.confirmedByWebhook && !e.reconciledViaApi && (
+                        <button
+                          onClick={() => handleReconcile(e.paypalOrderId!)}
+                          disabled={reconcilingId === e.paypalOrderId}
+                          className="px-2 py-1 rounded-lg bg-sky-950/60 hover:bg-sky-900 border border-sky-800 text-sky-300 hover:text-sky-200 text-[11px] font-sans flex items-center gap-1 cursor-pointer transition-colors disabled:opacity-50"
+                          title="Verify and reconcile transaction status directly with PayPal API"
+                        >
+                          <span>{reconcilingId === e.paypalOrderId ? 'Checking...' : 'Reconcile'}</span>
+                        </button>
+                      )}
 
                       {e.status === 'CAPTURED' && (
                         <button
@@ -393,6 +512,31 @@ export const LedgerGrid: React.FC<LedgerGridProps> = ({ entries, onRefund, onRef
                   </div>
                 </div>
               )}
+
+              {/* Cryptographic Hash Chain Verification Block */}
+              <div className="bg-zinc-950 p-3 rounded-lg border border-zinc-800 text-[11px] text-zinc-400 space-y-1.5">
+                <span className="font-bold text-zinc-300 block">SHA-256 Hash Chain Block:</span>
+                <div className="truncate">
+                  <span className="text-zinc-500">Previous Block Hash: </span>
+                  <span className="text-zinc-300 select-all font-mono text-[10px]">{selectedEntry.prevHash}</span>
+                </div>
+                <div className="truncate">
+                  <span className="text-zinc-500">Current Entry Hash: </span>
+                  <span className="text-indigo-400 select-all font-mono text-[10px] font-bold">{selectedEntry.entryHash}</span>
+                </div>
+                {selectedEntry.webhookEventId && (
+                  <div>
+                    <span className="text-zinc-500">PayPal Webhook Event ID: </span>
+                    <span className="text-emerald-400 select-all font-mono text-[10px]">{selectedEntry.webhookEventId}</span>
+                  </div>
+                )}
+                {selectedEntry.reconciledViaApi && (
+                  <div>
+                    <span className="text-zinc-500">Reconciliation: </span>
+                    <span className="text-sky-400 font-mono text-[10px]">Direct PayPal Orders v2 API Verification</span>
+                  </div>
+                )}
+              </div>
 
               <div className="bg-zinc-950 p-3 rounded-lg border border-zinc-800 text-[11px] text-zinc-400">
                 <span className="font-bold text-zinc-300 block mb-1">Telemetry:</span>

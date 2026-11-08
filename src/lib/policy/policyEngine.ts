@@ -12,7 +12,10 @@ export interface ProposedPurchase {
   offer: ProductOffer;
   shieldResult?: ShieldEvaluation;
   recentPurchasesCount?: number; // For velocity limit checks
+  recentPurchasesInPastHour?: number; // Alias for velocity limit checks
   previousPurchasedProductIds?: string[]; // For duplicate idempotency checks
+  existingIdempotencyKeys?: Set<string>;
+  proposedIdempotencyKey?: string;
 }
 
 export class PolicyEngine {
@@ -69,14 +72,14 @@ export class PolicyEngine {
     }
 
     // 3. Per-Item Price Cap & Floor
-    if (unitPrice <= 0) {
+    if (unitPrice <= 0 || unitPrice < 0.01) {
       checks.push({
         ruleName: 'Per-Item Price Ceiling',
         passed: false,
-        message: `Item price $${unitPrice.toFixed(2)} is non-positive or manipulated`,
+        message: `Item price $${unitPrice.toFixed(4)} is sub-cent, non-positive or manipulated`,
         severity: 'BLOCK',
       });
-      reasons.push(`Price anomaly: unit price $${unitPrice.toFixed(2)} is invalid or zero.`);
+      reasons.push(`Price anomaly: unit price $${unitPrice.toFixed(4)} violates minimum $0.01 floor.`);
     } else if (unitPrice > mandate.maxPerItemPrice) {
       checks.push({
         ruleName: 'Per-Item Price Ceiling',
@@ -256,18 +259,37 @@ export class PolicyEngine {
       }
     }
 
+    // 8b. Offer Stock Availability
+    if (proposal.offer.inStock === false) {
+      checks.push({
+        ruleName: 'Offer Stock Availability',
+        passed: false,
+        message: 'Proposed offer is out of stock',
+        severity: 'BLOCK',
+      });
+      reasons.push('Out-of-stock items cannot be ordered.');
+    } else {
+      checks.push({
+        ruleName: 'Offer Stock Availability',
+        passed: true,
+        message: 'Offer is currently in stock',
+        severity: 'PASS',
+      });
+    }
+
     // 9. Velocity Limit Check
+    const velocityCount = proposal.recentPurchasesCount ?? proposal.recentPurchasesInPastHour;
     if (
-      proposal.recentPurchasesCount !== undefined &&
-      proposal.recentPurchasesCount >= mandate.maxPurchasesPerHour
+      velocityCount !== undefined &&
+      velocityCount >= mandate.maxPurchasesPerHour
     ) {
       checks.push({
         ruleName: 'Velocity Control Rate Limit',
         passed: false,
-        message: `Purchases velocity (${proposal.recentPurchasesCount}/hr) reached mandate rate limit (${mandate.maxPurchasesPerHour}/hr)`,
+        message: `Purchases velocity (${velocityCount}/hr) reached mandate rate limit (${mandate.maxPurchasesPerHour}/hr)`,
         severity: 'BLOCK',
       });
-      reasons.push(`Velocity rate limit exceeded (${proposal.recentPurchasesCount}/${mandate.maxPurchasesPerHour} purchases per hour).`);
+      reasons.push(`Velocity rate limit exceeded (${velocityCount}/${mandate.maxPurchasesPerHour} purchases per hour).`);
     } else {
       checks.push({
         ruleName: 'Velocity Control Rate Limit',

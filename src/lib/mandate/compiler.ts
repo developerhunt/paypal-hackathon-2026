@@ -4,17 +4,34 @@ import { MandateRule, MandateCompilationResult } from '../../types/mandate.ts';
 export class MandateCompiler {
   private ai: GoogleGenAI | null = null;
   private modelName: string;
+  private isLiveMode: boolean = false;
 
   constructor() {
     const apiKey = process.env.GEMINI_API_KEY;
     this.modelName = process.env.GEMINI_MODEL || 'gemini-2.5-flash';
-    if (apiKey && apiKey !== 'MY_GEMINI_API_KEY' && apiKey !== 'YOUR_GEMINI_API_KEY_HERE') {
+    const forceMock = process.env.FORCE_MOCK_GEMINI === 'true';
+    const hasValidKey = Boolean(
+      apiKey &&
+      apiKey !== 'MY_GEMINI_API_KEY' &&
+      apiKey !== 'YOUR_GEMINI_API_KEY_HERE'
+    );
+
+    if (hasValidKey && !forceMock) {
       try {
         this.ai = new GoogleGenAI({ apiKey });
+        this.isLiveMode = true;
       } catch (e) {
         console.warn('GoogleGenAI initialization skipped:', e);
       }
     }
+  }
+
+  public get isLive(): boolean {
+    return this.isLiveMode;
+  }
+
+  public get model(): string {
+    return this.modelName;
   }
 
   /**

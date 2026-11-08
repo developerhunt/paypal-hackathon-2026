@@ -1,7 +1,7 @@
 import { ShieldEvaluation } from '../../types/ledger.ts';
 
-// Known zero-width and invisible control unicode points often used for evasion
-const ZERO_WIDTH_REGEX = /[\u200B-\u200D\uFEFF\u00AD\u2060\u180E\u200E\u200F\u202A-\u202E]/g;
+// Known zero-width, invisible control unicode points, and Unicode Tag characters used for steganographic evasion
+const ZERO_WIDTH_REGEX = /[\u200B-\u200D\uFEFF\u00AD\u2060\u180E\u200E\u200F\u202A-\u202E\u{E0001}-\u{E007F}]/gu;
 
 // Cyrillic to Latin homoglyph map
 const HOMOGLYPHS: Record<string, string> = {
@@ -24,7 +24,7 @@ const INJECTION_PATTERNS: Array<{ name: string; regex: RegExp; weight: number }>
   },
   {
     name: 'System Role Spoofing',
-    regex: /(system\s*:\s*you\s+are|you\s+are\s+now\s+in\s+developer\s+mode|act\s+as\s+unfiltered|new\s+system\s+instruction)/i,
+    regex: /(system\s*:\s*you\s+are|you\s+are\s+now\s+in\s+developer\s+mode|act\s+as\s+unfiltered|new\s+system\s+instruction|system\s+directive\s*:)/i,
     weight: 40,
   },
   {
@@ -51,6 +51,16 @@ const INJECTION_PATTERNS: Array<{ name: string; regex: RegExp; weight: number }>
     name: 'Urgency / Coercive Social Engineering',
     regex: /(urgent\s*:\s*ignore\s+policy|admin\s+override\s+code\s*:\s*\w+|emergency\s+bypass\s+approved)/i,
     weight: 30,
+  },
+  {
+    name: 'Encoded Evasion / Payload Obfuscation',
+    regex: /(base64\s*:\s*[A-Za-z0-9+/=]{16,}|data:text\/[a-z]+;base64,|[A-Za-z0-9+/=]{40,}=)/i,
+    weight: 35,
+  },
+  {
+    name: 'Hidden Comment Injection',
+    regex: /(<!--\s*(system|instruction|bypass|override).*?-->|\[\/\/\]:\s*#\s*\((.*?bypass.*?|.*?ignore.*?)\))/is,
+    weight: 40,
   },
 ];
 
@@ -103,9 +113,18 @@ export class PromptInjectionShield {
       snippet = 'Invisible zero-width unicode bytes stripped';
     }
 
-    // Pattern matching over sanitized text
+    // Check for embedded script / executable HTML tags
+    if (/<(script|iframe|object|embed)[^>]*>/i.test(untrustedContent)) {
+      attackVectors.push('Embedded Executable Script / HTML Code');
+      cumulativeRisk += 40;
+      snippet = snippet || 'Dangerous HTML script or embed tag detected';
+    }
+
+    // Pattern matching over sanitized text and de-hyphenated split-token variant
+    const dehyphenated = sanitized.replace(/([a-zA-Z])[-_]([a-zA-Z])/g, '$1$2');
+
     for (const pattern of INJECTION_PATTERNS) {
-      const match = pattern.regex.exec(sanitized);
+      const match = pattern.regex.exec(sanitized) || pattern.regex.exec(dehyphenated);
       if (match) {
         attackVectors.push(pattern.name);
         cumulativeRisk += pattern.weight;

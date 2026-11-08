@@ -49,8 +49,15 @@ This document outlines the exact steps required from the repository owner/submit
   - Node.js Web Service on port 3000
   - Health check endpoint: `/healthz`
   - Environment variables: configure `PAYPAL_CLIENT_ID`, `PAYPAL_CLIENT_SECRET`, `GEMINI_API_KEY`, etc.
-- [ ] Deploy and verify the live URL.
-- [ ] **Warm-up Reminder**: If using Render free-tier, visit the URL 10 minutes prior to submission and judging review to prevent cold starts.
+- [ ] Run pre-submission audit script locally:
+  ```bash
+  npm run check:submission
+  ```
+  Ensure all 8 verification items show green checkmarks.
+- [ ] Deploy and verify the live URL (`https://leash-agentic-trust-layer.onrender.com`).
+- [ ] **Render Free-Tier Rules**:
+  - Web service spins down after 15 minutes of inactivity; allow ~40s for initial wake-up or use a free uptime monitor (e.g., UptimeRobot pinging `/healthz` every 10 min).
+  - If using Render PostgreSQL, free-tier databases expire after 30 days unless upgraded. LEASH automatically uses persistent disk ledger storage as well so judges have unbroken audit logs even if database spins down.
 
 ---
 

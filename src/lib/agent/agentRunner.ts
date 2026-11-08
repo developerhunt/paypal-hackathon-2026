@@ -117,7 +117,7 @@ export class AgentRunner {
       );
 
       // Create ledger entry for blocked attack
-      const ledgerEntry: LedgerEntry = {
+      const ledgerEntry = LedgerStore.addEntry({
         id: `LSH-${Date.now().toString().slice(-6)}`,
         timestamp: new Date().toISOString(),
         scenarioKey,
@@ -153,9 +153,7 @@ export class AgentRunner {
           latencyMs: Date.now() - startTime,
           estimatedCostUsd: 0.00018,
         },
-      };
-
-      LedgerStore.addEntry(ledgerEntry);
+      });
 
       return {
         missionId,
@@ -226,7 +224,7 @@ export class AgentRunner {
         { checks: policyEval.checks }
       );
 
-      const ledgerEntry: LedgerEntry = {
+      const ledgerEntry = LedgerStore.addEntry({
         id: `LSH-${Date.now().toString().slice(-6)}`,
         timestamp: new Date().toISOString(),
         scenarioKey,
@@ -251,9 +249,7 @@ export class AgentRunner {
           latencyMs: Date.now() - startTime,
           estimatedCostUsd: 0.00021,
         },
-      };
-
-      LedgerStore.addEntry(ledgerEntry);
+      });
 
       return {
         missionId,
@@ -272,8 +268,36 @@ export class AgentRunner {
         `Policy passed safety checks, but total $${totalAmount.toFixed(2)} exceeds autonomous limit $${mandate.autoApproveThreshold.toFixed(2)}. Pausing for Human Approval.`
       );
 
+      const idempotencyKey = `idemp-${missionId}`;
+      let paypalOrderId: string | undefined;
+      let paypalApprovalUrl: string | undefined;
+
+      try {
+        const orderRes = await this.paypal.createOrder(
+          {
+            intent: 'CAPTURE',
+            purchase_units: [
+              {
+                reference_id: missionId,
+                custom_id: `LSH-${missionId}`,
+                description: primaryCandidate.title.slice(0, 127),
+                amount: {
+                  currency_code: mandate.currency,
+                  value: totalAmount.toFixed(2),
+                },
+              },
+            ],
+          },
+          idempotencyKey
+        );
+        paypalOrderId = orderRes.id;
+        paypalApprovalUrl = orderRes.links.find((l) => l.rel === 'approve')?.href;
+      } catch (err) {
+        console.warn('Pre-creating PayPal order for approval gate:', err);
+      }
+
       // Create ledger entry in NEEDS_APPROVAL state
-      const ledgerEntry: LedgerEntry = {
+      const ledgerEntry = LedgerStore.addEntry({
         id: `LSH-${Date.now().toString().slice(-6)}`,
         timestamp: new Date().toISOString(),
         scenarioKey,
@@ -289,7 +313,9 @@ export class AgentRunner {
         policyResult: policyEval,
         agentReasoning: `Agent selected ${primaryCandidate.title} ($${totalAmount.toFixed(2)}) based on build quality and top reviews. Requires human authorization because it exceeds auto-approval ceiling ($${mandate.autoApproveThreshold.toFixed(2)}).`,
         riskAnalysis: 'Moderate financial commitment: Within overall budget cap, but requires human sign-off.',
-        idempotencyKey: `idemp-${missionId}`,
+        idempotencyKey,
+        paypalOrderId,
+        paypalApprovalUrl,
         telemetry: {
           modelName: 'gemini-2.5-flash',
           totalTokensUsed: 1140,
@@ -298,15 +324,13 @@ export class AgentRunner {
           latencyMs: Date.now() - startTime,
           estimatedCostUsd: 0.00026,
         },
-      };
-
-      LedgerStore.addEntry(ledgerEntry);
+      });
 
       reportStep(
         6,
         'Human Approval Gate',
         'RUNNING',
-        `Awaiting human authorization for $${totalAmount.toFixed(2)} ${mandate.currency}...`
+        `Awaiting human authorization for $${totalAmount.toFixed(2)} ${mandate.currency}... ${paypalApprovalUrl ? '(PayPal Sandbox approval link ready)' : ''}`
       );
 
       return {
@@ -381,7 +405,7 @@ export class AgentRunner {
     mandate.remainingBudget = Math.max(0, parseFloat((mandate.remainingBudget - totalAmount).toFixed(2)));
 
     // Record completed transaction in Ledger
-    const ledgerEntry: LedgerEntry = {
+    const ledgerEntry = LedgerStore.addEntry({
       id: `LSH-${Date.now().toString().slice(-6)}`,
       timestamp: new Date().toISOString(),
       scenarioKey,
@@ -409,9 +433,7 @@ export class AgentRunner {
         latencyMs: Date.now() - startTime,
         estimatedCostUsd: 0.00032,
       },
-    };
-
-    LedgerStore.addEntry(ledgerEntry);
+    });
 
     return {
       missionId,
@@ -432,27 +454,32 @@ export class AgentRunner {
     const entry = LedgerStore.getEntryById(ledgerId);
     if (!entry || entry.status !== 'NEEDS_APPROVAL') return undefined;
 
-    // Create and capture PayPal order
     const totalAmount = entry.totalAmount;
-    const orderResponse = await this.paypal.createOrder(
-      {
-        intent: 'CAPTURE',
-        purchase_units: [
-          {
-            reference_id: entry.id,
-            custom_id: entry.id,
-            description: entry.product?.title.slice(0, 127) || 'Approved Agentic Purchase',
-            amount: {
-              currency_code: entry.currency,
-              value: totalAmount.toFixed(2),
-            },
-          },
-        ],
-      },
-      `idemp-appr-${entry.id}`
-    );
+    let orderId = entry.paypalOrderId;
 
-    const captureResponse = await this.paypal.captureOrder(orderResponse.id);
+    // If order was not pre-created, create it now
+    if (!orderId) {
+      const orderResponse = await this.paypal.createOrder(
+        {
+          intent: 'CAPTURE',
+          purchase_units: [
+            {
+              reference_id: entry.id,
+              custom_id: entry.id,
+              description: entry.product?.title.slice(0, 127) || 'Approved Agentic Purchase',
+              amount: {
+                currency_code: entry.currency,
+                value: totalAmount.toFixed(2),
+              },
+            },
+          ],
+        },
+        `idemp-appr-${entry.id}`
+      );
+      orderId = orderResponse.id;
+    }
+
+    const captureResponse = await this.paypal.captureOrder(orderId);
 
     // Update mandate snapshot
     entry.mandateSnapshot.remainingBudget = Math.max(
@@ -467,7 +494,7 @@ export class AgentRunner {
         approvedBy,
         notes: 'Authorized by human buyer via Leash Approval Gate',
       },
-      paypalOrderId: orderResponse.id,
+      paypalOrderId: orderId,
       paypalCaptureId: captureResponse.id,
     });
 

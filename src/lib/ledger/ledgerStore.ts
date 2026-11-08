@@ -1,7 +1,20 @@
+import fs from 'fs';
+import path from 'path';
+import { fileURLToPath } from 'url';
 import { LedgerEntry } from '../../types/ledger.ts';
 import { MandateRule } from '../../types/mandate.ts';
+import {
+  computeEntryHash,
+  verifyChain,
+  GENESIS_HASH,
+  ChainVerificationResult,
+} from './hashChain.ts';
 
-// Initial pre-seeded entries showcasing the full state machine and audit trail
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+const DATA_DIR = path.resolve(__dirname, '../../../data');
+const LEDGER_FILE = path.join(DATA_DIR, 'ledger.json');
+
 const SEED_MANDATE: MandateRule = {
   id: 'mnd-seed-primary',
   name: 'Workspace Audio & Tech Mandate',
@@ -21,9 +34,9 @@ const SEED_MANDATE: MandateRule = {
   allowPriceDriftPercent: 5,
 };
 
-const INITIAL_SEEDED_LEDGER: LedgerEntry[] = [
-  // Prior captured transaction
-  {
+function createInitialSeedChain(): LedgerEntry[] {
+  // Block 1 (Genesis transaction)
+  const raw1: Omit<LedgerEntry, 'prevHash' | 'entryHash'> = {
     id: 'LSH-2026-0001',
     timestamp: new Date(Date.now() - 3600 * 1000 * 4).toISOString(),
     scenarioKey: 'A',
@@ -75,6 +88,8 @@ const INITIAL_SEEDED_LEDGER: LedgerEntry[] = [
     riskAnalysis: 'Low risk: Established retail merchant (BestBuy Official Store, 4.8/5 score) with 30-day return policy.',
     paypalOrderId: '5O190127TN364715T',
     paypalCaptureId: 'CAP-77192-LSH-01',
+    confirmedByWebhook: true,
+    webhookEventId: 'WH-EVT-99210-A',
     idempotencyKey: 'idemp-seed-001',
     isCachedDemoResult: true,
     telemetry: {
@@ -85,10 +100,13 @@ const INITIAL_SEEDED_LEDGER: LedgerEntry[] = [
       latencyMs: 840,
       estimatedCostUsd: 0.00035,
     },
-  },
+  };
+  const prevHash1 = GENESIS_HASH;
+  const entryHash1 = computeEntryHash(prevHash1, raw1 as unknown as Record<string, unknown>);
+  const entry1: LedgerEntry = { ...raw1, prevHash: prevHash1, entryHash: entryHash1 };
 
-  // Prior prompt-injection attack blocked
-  {
+  // Block 2
+  const raw2: Omit<LedgerEntry, 'prevHash' | 'entryHash'> = {
     id: 'LSH-2026-0002',
     timestamp: new Date(Date.now() - 3600 * 1000 * 2).toISOString(),
     scenarioKey: 'D',
@@ -128,7 +146,7 @@ const INITIAL_SEEDED_LEDGER: LedgerEntry[] = [
           severity: 'BLOCK',
         },
       ],
-      reasons: ['Security quarantine: untrusted listing contains adversarial prompt injection attempt.'],
+      reasons: ['Security shield intercepted prompt injection attack payload before agent consideration.'],
       evaluatedAt: new Date(Date.now() - 3600 * 1000 * 2).toISOString(),
     },
     agentReasoning: 'Security Shield quarantined candidate listing prod-poisoned-listing-01 before proposal synthesis. Agent bypassed item entirely.',
@@ -143,10 +161,13 @@ const INITIAL_SEEDED_LEDGER: LedgerEntry[] = [
       latencyMs: 310,
       estimatedCostUsd: 0.00014,
     },
-  },
+  };
+  const prevHash2 = entry1.entryHash;
+  const entryHash2 = computeEntryHash(prevHash2, raw2 as unknown as Record<string, unknown>);
+  const entry2: LedgerEntry = { ...raw2, prevHash: prevHash2, entryHash: entryHash2 };
 
-  // Prior policy budget overrun blocked
-  {
+  // Block 3
+  const raw3: Omit<LedgerEntry, 'prevHash' | 'entryHash'> = {
     id: 'LSH-2026-0003',
     timestamp: new Date(Date.now() - 3600 * 1000 * 1).toISOString(),
     scenarioKey: 'C',
@@ -214,33 +235,169 @@ const INITIAL_SEEDED_LEDGER: LedgerEntry[] = [
       latencyMs: 512,
       estimatedCostUsd: 0.00022,
     },
-  },
-];
+  };
+  const prevHash3 = entry2.entryHash;
+  const entryHash3 = computeEntryHash(prevHash3, raw3 as unknown as Record<string, unknown>);
+  const entry3: LedgerEntry = { ...raw3, prevHash: prevHash3, entryHash: entryHash3 };
+
+  return [entry1, entry2, entry3];
+}
 
 export class LedgerStore {
-  private static entries: LedgerEntry[] = [...INITIAL_SEEDED_LEDGER];
+  // Stored chronologically (oldest at index 0, latest at index length-1)
+  private static entries: LedgerEntry[] = [];
+  private static isInitialized = false;
   private static listeners: Array<(entries: LedgerEntry[]) => void> = [];
 
+  private static init(): void {
+    if (this.isInitialized) return;
+
+    try {
+      if (!fs.existsSync(DATA_DIR)) {
+        fs.mkdirSync(DATA_DIR, { recursive: true });
+      }
+
+      if (fs.existsSync(LEDGER_FILE)) {
+        const raw = fs.readFileSync(LEDGER_FILE, 'utf-8');
+        const parsed = JSON.parse(raw);
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          this.entries = parsed;
+          this.isInitialized = true;
+          return;
+        }
+      }
+    } catch (err) {
+      console.warn('Failed to read persistent ledger file, initializing seeds:', err);
+    }
+
+    // Default to clean seed chain
+    this.entries = createInitialSeedChain();
+    this.saveToFile();
+    this.isInitialized = true;
+  }
+
+  private static saveToFile(): void {
+    try {
+      if (!fs.existsSync(DATA_DIR)) {
+        fs.mkdirSync(DATA_DIR, { recursive: true });
+      }
+      fs.writeFileSync(LEDGER_FILE, JSON.stringify(this.entries, null, 2), 'utf-8');
+    } catch (err) {
+      console.error('Failed to persist ledger to disk:', err);
+    }
+  }
+
+  /**
+   * Returns entries in reverse chronological order (newest first for UI display).
+   */
   public static getEntries(): LedgerEntry[] {
+    this.init();
+    return [...this.entries].reverse();
+  }
+
+  /**
+   * Returns entries in chronological order (oldest to newest for chain verification).
+   */
+  public static getChronologicalEntries(): LedgerEntry[] {
+    this.init();
     return [...this.entries];
   }
 
   public static getEntryById(id: string): LedgerEntry | undefined {
+    this.init();
     return this.entries.find((e) => e.id === id);
   }
 
-  public static addEntry(entry: LedgerEntry): void {
-    // Insert at front (most recent first)
-    this.entries.unshift(entry);
+  /**
+   * Appends an entry to the hash chain.
+   */
+  public static addEntry(data: Omit<LedgerEntry, 'prevHash' | 'entryHash'>): LedgerEntry {
+    this.init();
+
+    // The previous hash is the entryHash of the latest chronological entry (or GENESIS_HASH)
+    const prevHash =
+      this.entries.length > 0
+        ? this.entries[this.entries.length - 1].entryHash
+        : GENESIS_HASH;
+
+    const entryHash = computeEntryHash(prevHash, data as unknown as Record<string, unknown>);
+    const entry: LedgerEntry = {
+      ...data,
+      prevHash,
+      entryHash,
+    };
+
+    this.entries.push(entry);
+    this.saveToFile();
     this.notify();
+    return entry;
   }
 
+  /**
+   * Updates an existing entry (or records state transition) and persists.
+   */
   public static updateEntry(id: string, partial: Partial<LedgerEntry>): LedgerEntry | undefined {
+    this.init();
     const idx = this.entries.findIndex((e) => e.id === id);
     if (idx === -1) return undefined;
+
     this.entries[idx] = { ...this.entries[idx], ...partial };
+    // Recalculate hash for updated block
+    const prevHash = this.entries[idx].prevHash;
+    this.entries[idx].entryHash = computeEntryHash(
+      prevHash,
+      this.entries[idx] as unknown as Record<string, unknown>
+    );
+
+    // Propagate forward through chain
+    for (let i = idx + 1; i < this.entries.length; i++) {
+      this.entries[i].prevHash = this.entries[i - 1].entryHash;
+      this.entries[i].entryHash = computeEntryHash(
+        this.entries[i].prevHash,
+        this.entries[i] as unknown as Record<string, unknown>
+      );
+    }
+
+    this.saveToFile();
     this.notify();
     return this.entries[idx];
+  }
+
+  /**
+   * Confirms settlement by PayPal webhook event ID.
+   */
+  public static confirmWebhook(captureId: string, webhookEventId: string): LedgerEntry | undefined {
+    this.init();
+    const match = this.entries.find((e) => e.paypalCaptureId === captureId);
+    if (match) {
+      return this.updateEntry(match.id, {
+        confirmedByWebhook: true,
+        webhookEventId,
+      });
+    }
+    return undefined;
+  }
+
+  /**
+   * Marks settlement as verified via direct PayPal API polling reconciliation.
+   */
+  public static markReconciledViaApi(orderId: string): LedgerEntry | undefined {
+    this.init();
+    const match = this.entries.find((e) => e.paypalOrderId === orderId);
+    if (match) {
+      return this.updateEntry(match.id, {
+        reconciledViaApi: true,
+      });
+    }
+    return undefined;
+  }
+
+  /**
+   * Cryptographically verifies the continuous SHA-256 hash chain.
+   */
+  public static verifyIntegrity(): ChainVerificationResult {
+    this.init();
+    return verifyChain(this.entries as unknown as Array<Record<string, unknown> & { id: string; prevHash: string; entryHash: string }>);
   }
 
   public static subscribe(listener: (entries: LedgerEntry[]) => void): () => void {
@@ -251,9 +408,10 @@ export class LedgerStore {
   }
 
   private static notify(): void {
+    const reversed = [...this.entries].reverse();
     for (const listener of this.listeners) {
       try {
-        listener([...this.entries]);
+        listener(reversed);
       } catch (err) {
         console.error('Ledger listener error:', err);
       }
@@ -261,6 +419,7 @@ export class LedgerStore {
   }
 
   public static getStats() {
+    this.init();
     let totalSpent = 0;
     let blockedCount = 0;
     let approvedCount = 0;
@@ -292,6 +451,7 @@ export class LedgerStore {
   }
 
   public static exportCsv(): string {
+    this.init();
     const headers = [
       'Entry ID',
       'Timestamp',
@@ -303,13 +463,16 @@ export class LedgerStore {
       'Total Amount ($)',
       'PayPal Order ID',
       'PayPal Capture ID',
+      'Webhook Confirmed',
       'Risk Score',
       'Policy Verdict',
+      'Prev Hash',
+      'Entry Hash',
       'Agent Latency (ms)',
       'Model Used',
     ];
 
-    const rows = this.entries.map((e) => [
+    const rows = [...this.entries].reverse().map((e) => [
       `"${e.id}"`,
       `"${e.timestamp}"`,
       `"${e.scenarioKey || 'CUSTOM'}"`,
@@ -320,10 +483,13 @@ export class LedgerStore {
       e.totalAmount.toFixed(2),
       `"${e.paypalOrderId || ''}"`,
       `"${e.paypalCaptureId || ''}"`,
+      e.confirmedByWebhook ? 'true' : 'false',
       e.shieldResult?.riskScore ?? 0,
       `"${e.policyResult?.overallVerdict || ''}"`,
-      e.telemetry.latencyMs,
-      `"${e.telemetry.modelName}"`,
+      `"${e.prevHash.slice(0, 16)}..."`,
+      `"${e.entryHash.slice(0, 16)}..."`,
+      e.telemetry?.latencyMs ?? 0,
+      `"${e.telemetry?.modelName || 'gemini-2.5-flash'}"`,
     ]);
 
     return [headers.join(','), ...rows.map((r) => r.join(','))].join('\n');

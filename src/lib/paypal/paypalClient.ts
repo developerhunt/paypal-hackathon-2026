@@ -28,13 +28,19 @@ export class PayPalClient {
     this.environment = config.environment || (process.env.PAYPAL_ENVIRONMENT as 'sandbox' | 'production') || 'sandbox';
     this.webhookId = config.webhookId || process.env.PAYPAL_WEBHOOK_ID || '';
     
-    // Automatically use mock fallback if credentials are empty or MOCK_MODE is enabled
-    this.isMockMode =
-      config.isMockMode ??
-      (process.env.MOCK_MODE === 'true' || !this.clientId || !this.clientSecret);
+    // Per-subsystem auto-detection: LIVE by default when credentials exist; MOCK only if missing or forced
+    const forceMock = process.env.FORCE_MOCK_PAYPAL === 'true';
+    const hasValidCreds = Boolean(
+      this.clientId &&
+      this.clientSecret &&
+      !this.clientId.includes('YOUR_PAYPAL') &&
+      !this.clientId.includes('MY_PAYPAL')
+    );
+
+    this.isMockMode = config.isMockMode ?? (forceMock || !hasValidCreds);
   }
 
-  private get baseUrl(): string {
+  public get baseUrl(): string {
     return this.environment === 'production'
       ? 'https://api-m.paypal.com'
       : 'https://api-m.sandbox.paypal.com';
@@ -44,10 +50,34 @@ export class PayPalClient {
     return this.isMockMode;
   }
 
+  public get modeDescription(): string {
+    return this.isMockMode ? 'MOCK_FIXTURE' : `LIVE_SANDBOX (${this.environment})`;
+  }
+
+  /**
+   * Helper to execute HTTP requests with retry for idempotent calls.
+   */
+  private async fetchWithRetry(url: string, options: RequestInit, retries = 2): Promise<Response> {
+    for (let attempt = 0; attempt <= retries; attempt++) {
+      try {
+        const res = await fetch(url, options);
+        if (res.status >= 500 && attempt < retries) {
+          await new Promise((r) => setTimeout(r, 400 * Math.pow(2, attempt)));
+          continue;
+        }
+        return res;
+      } catch (err) {
+        if (attempt >= retries) throw err;
+        await new Promise((r) => setTimeout(r, 400 * Math.pow(2, attempt)));
+      }
+    }
+    throw new Error(`PayPal request to ${url} failed after ${retries} retries`);
+  }
+
   /**
    * Fetches OAuth 2.0 access token using client_credentials grant.
    */
-  private async getAccessToken(): Promise<string> {
+  public async getAccessToken(): Promise<string> {
     if (this.tokenCache && this.tokenCache.expiresAt > Date.now()) {
       return this.tokenCache.token;
     }
@@ -57,7 +87,7 @@ export class PayPalClient {
     }
 
     const auth = Buffer.from(`${this.clientId}:${this.clientSecret}`).toString('base64');
-    const response = await fetch(`${this.baseUrl}/v1/oauth2/token`, {
+    const response = await this.fetchWithRetry(`${this.baseUrl}/v1/oauth2/token`, {
       method: 'POST',
       headers: {
         Authorization: `Basic ${auth}`,
@@ -80,11 +110,12 @@ export class PayPalClient {
   }
 
   /**
-   * Creates an order with intent CAPTURE, custom_id, and PayPal-Request-Id idempotency header.
+   * Creates an order with intent CAPTURE, custom_id, experience_context, and PayPal-Request-Id idempotency header.
    */
   public async createOrder(
     request: PayPalCreateOrderRequest,
-    idempotencyKey: string
+    idempotencyKey: string,
+    appUrl: string = process.env.APP_URL || 'http://localhost:3000'
   ): Promise<PayPalOrderResponse> {
     if (this.isMockMode) {
       const mockId = `5O${Math.floor(10000000000000 + Math.random() * 90000000000000)}`;
@@ -109,14 +140,31 @@ export class PayPalClient {
     }
 
     const token = await this.getAccessToken();
-    const response = await fetch(`${this.baseUrl}/v2/checkout/orders`, {
+
+    // Prepare full Orders v2 payload with experience_context for user approval redirect
+    const payload = {
+      ...request,
+      payment_source: {
+        paypal: {
+          experience_context: {
+            brand_name: 'Leash Agentic Trust',
+            shipping_preference: 'NO_SHIPPING',
+            user_action: 'PAY_NOW',
+            return_url: `${appUrl}/api/paypal/return`,
+            cancel_url: `${appUrl}/api/paypal/cancel`,
+          },
+        },
+      },
+    };
+
+    const response = await this.fetchWithRetry(`${this.baseUrl}/v2/checkout/orders`, {
       method: 'POST',
       headers: {
         Authorization: `Bearer ${token}`,
         'Content-Type': 'application/json',
         'PayPal-Request-Id': idempotencyKey,
       },
-      body: JSON.stringify(request),
+      body: JSON.stringify(payload),
     });
 
     if (!response.ok) {
@@ -142,7 +190,7 @@ export class PayPalClient {
     }
 
     const token = await this.getAccessToken();
-    const response = await fetch(`${this.baseUrl}/v2/checkout/orders/${orderId}`, {
+    const response = await this.fetchWithRetry(`${this.baseUrl}/v2/checkout/orders/${orderId}`, {
       method: 'GET',
       headers: {
         Authorization: `Bearer ${token}`,
@@ -188,10 +236,13 @@ export class PayPalClient {
       headers['PayPal-Request-Id'] = idempotencyKey;
     }
 
-    const response = await fetch(`${this.baseUrl}/v2/checkout/orders/${orderId}/capture`, {
-      method: 'POST',
-      headers,
-    });
+    const response = await this.fetchWithRetry(
+      `${this.baseUrl}/v2/checkout/orders/${orderId}/capture`,
+      {
+        method: 'POST',
+        headers,
+      }
+    );
 
     if (!response.ok) {
       const err = await response.text();
@@ -242,11 +293,14 @@ export class PayPalClient {
     if (amount) body.amount = amount;
     if (noteToPayer) body.note_to_payer = noteToPayer;
 
-    const response = await fetch(`${this.baseUrl}/v2/payments/captures/${captureId}/refund`, {
-      method: 'POST',
-      headers,
-      body: JSON.stringify(body),
-    });
+    const response = await this.fetchWithRetry(
+      `${this.baseUrl}/v2/payments/captures/${captureId}/refund`,
+      {
+        method: 'POST',
+        headers,
+        body: JSON.stringify(body),
+      }
+    );
 
     if (!response.ok) {
       const err = await response.text();
@@ -282,14 +336,17 @@ export class PayPalClient {
       webhook_event: params.webhookEvent,
     };
 
-    const response = await fetch(`${this.baseUrl}/v1/notifications/verify-webhook-signature`, {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${token}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify(payload),
-    });
+    const response = await this.fetchWithRetry(
+      `${this.baseUrl}/v1/notifications/verify-webhook-signature`,
+      {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${token}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(payload),
+      }
+    );
 
     if (!response.ok) return false;
     const data = await response.json();

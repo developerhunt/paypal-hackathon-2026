@@ -158,7 +158,7 @@ export const ApprovalModal: React.FC<ApprovalModalProps> = ({
         )}
 
         {/* Action Buttons */}
-        <div className="flex items-center justify-end gap-2.5 pt-3 border-t border-zinc-800">
+        <div className="flex flex-wrap items-center justify-end gap-2.5 pt-3 border-t border-zinc-800">
           {!showRejectInput ? (
             <button
               onClick={() => setShowRejectInput(true)}
@@ -174,6 +174,18 @@ export const ApprovalModal: React.FC<ApprovalModalProps> = ({
             >
               Confirm Rejection
             </button>
+          )}
+
+          {entry.paypalApprovalUrl && (
+            <a
+              href={entry.paypalApprovalUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="px-4 py-2 rounded-lg bg-amber-500 hover:bg-amber-400 text-zinc-950 text-xs font-bold flex items-center gap-1.5 shadow-lg shadow-amber-950/40 cursor-pointer transition-colors"
+              title="Open official PayPal Sandbox checkout flow in new tab"
+            >
+              <span>Open PayPal Checkout</span>
+            </a>
           )}
 
           <button
